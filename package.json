@@ -1,6 +1,6 @@
 {
   "name": "@profullstack/state-manager",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A simplified state management system inspired by Svelte's reactivity model",
   "main": "dist/index.js",
   "module": "dist/index.js",
