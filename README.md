@@ -20,6 +20,16 @@ pnpm add @profullstack/state-manager
 yarn add @profullstack/state-manager
 ```
 
+### Direct Usage via ESM.sh
+
+For direct usage in the browser without installation, you can use ESM.sh:
+
+```javascript
+import { createStore, StoreConnector } from 'https://esm.sh/@profullstack/state-manager@1.0.0';
+```
+
+This is particularly useful for client-side applications where you want to import the module directly in your HTML or JavaScript files without a build step.
+
 ## Usage
 
 ### Basic Usage
