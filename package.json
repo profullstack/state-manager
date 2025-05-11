@@ -1,6 +1,6 @@
 {
   "name": "@profullstack/state-manager",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Enhanced state manager with web component integration, persistence, and subscription management",
   "type": "module",
   "main": "dist/index.js",
@@ -13,8 +13,11 @@
   },
   "scripts": {
     "build": "mkdir -p dist && cp -r src/* dist/",
-    "test": "node test/index.js",
+    "test": "pnpm install && node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
   },
   "keywords": [
     "state",
