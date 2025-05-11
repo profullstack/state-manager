@@ -1,376 +1,758 @@
 /**
- * Simple State Manager - A Svelte-inspired reactive state management system
+ * @profullstack/state-manager
  * 
- * This provides a simpler API for state management compared to traditional implementations.
- * It uses JavaScript Proxies to create a reactive state object that automatically
- * triggers updates when properties change.
+ * Enhanced state manager with web component integration, persistence, and subscription management
  */
 
-// Store a global reference to all created stores
-const stores = new Map();
+import EventEmitter from 'eventemitter3';
+import { createPersistenceManager } from './persistence.js';
+import { createWebComponentIntegration } from './web-components.js';
+import { createMiddlewareManager } from './middleware.js';
 
 /**
- * Create a reactive store with the given initial state
- * @param {string} name - Unique name for this store
- * @param {object} initialState - Initial state object
- * @returns {object} - Store object with state and methods
+ * Enhanced State Manager
+ * @extends EventEmitter
  */
-export function createStore(name, initialState = {}) {
-  if (stores.has(name)) {
-    console.warn(`Store with name "${name}" already exists. Returning existing store.`);
-    return stores.get(name);
+class StateManager extends EventEmitter {
+  /**
+   * Create a new StateManager
+   * @param {Object} initialState - Initial state
+   * @param {Object} options - Configuration options
+   * @param {boolean} options.enablePersistence - Whether to enable persistence (default: false)
+   * @param {string} options.persistenceKey - Key for persistence storage (default: 'app_state')
+   * @param {Object} options.persistenceAdapter - Persistence adapter (default: localStorage)
+   * @param {string[]} options.persistentKeys - Keys to persist (default: all)
+   * @param {boolean} options.immutable - Whether to use immutable state (default: true)
+   * @param {boolean} options.debug - Whether to enable debug logging (default: false)
+   */
+  constructor(initialState = {}, options = {}) {
+    super();
+    
+    // Default options
+    this.options = {
+      enablePersistence: false,
+      persistenceKey: 'app_state',
+      persistenceAdapter: null,
+      persistentKeys: null,
+      immutable: true,
+      debug: false,
+      ...options
+    };
+    
+    // Initialize state
+    this._state = this._clone(initialState);
+    
+    // Initialize subscribers
+    this._subscribers = new Map();
+    this._globalSubscribers = [];
+    
+    // Initialize persistence
+    this.persistence = createPersistenceManager({
+      enabled: this.options.enablePersistence,
+      key: this.options.persistenceKey,
+      adapter: this.options.persistenceAdapter,
+      persistentKeys: this.options.persistentKeys
+    });
+    
+    // Initialize middleware manager
+    this.middleware = createMiddlewareManager();
+    
+    // Initialize web component integration
+    this.webComponents = createWebComponentIntegration(this);
+    
+    // Load persisted state if enabled
+    if (this.options.enablePersistence) {
+      const persistedState = this.persistence.load();
+      if (persistedState) {
+        this._state = this._merge(this._state, persistedState);
+      }
+    }
+    
+    // Bind methods to ensure correct 'this' context
+    this.getState = this.getState.bind(this);
+    this.setState = this.setState.bind(this);
+    this.resetState = this.resetState.bind(this);
+    this.subscribe = this.subscribe.bind(this);
+    this.unsubscribe = this.unsubscribe.bind(this);
+    this.use = this.use.bind(this);
+    
+    this._log('StateManager initialized with state:', this._state);
   }
   
-  // Track all subscribers
-  const subscribers = new Map();
-  
-  // Track all property-specific subscribers
-  const propSubscribers = new Map();
-  
-  // The actual state object
-  let stateObj = { ...initialState };
-  
-  // Create a proxy to track state access and changes
-  const state = new Proxy(stateObj, {
-    get(target, prop) {
-      // Just return the value
-      return target[prop];
-    },
+  /**
+   * Get the current state or a specific part of the state
+   * @param {string|string[]} [path] - Optional path to get a specific part of the state
+   * @returns {any} The requested state
+   */
+  getState(path) {
+    // If no path, return the entire state
+    if (path === undefined) {
+      return this._clone(this._state);
+    }
     
-    set(target, prop, value) {
-      const oldValue = target[prop];
+    // Handle array path
+    if (Array.isArray(path)) {
+      return this._getNestedValue(this._state, path);
+    }
+    
+    // Handle string path (dot notation)
+    if (typeof path === 'string') {
+      const pathArray = path.split('.');
+      return this._getNestedValue(this._state, pathArray);
+    }
+    
+    // Invalid path
+    return undefined;
+  }
+  
+  /**
+   * Update the state
+   * @param {Object|Function} update - Object to merge with state or function that returns an update object
+   * @param {Object} options - Update options
+   * @param {boolean} options.silent - Whether to suppress notifications (default: false)
+   * @param {boolean} options.persist - Whether to persist the update (default: true if persistence is enabled)
+   * @returns {Object} The new state
+   */
+  setState(update, options = {}) {
+    // Default options
+    const updateOptions = {
+      silent: false,
+      persist: this.options.enablePersistence,
+      ...options
+    };
+    
+    // Handle function updates (for state that depends on previous state)
+    const updateObj = typeof update === 'function' 
+      ? update(this._clone(this._state)) 
+      : update;
+    
+    // Apply middleware
+    const processedUpdate = this.middleware.applyMiddleware('beforeUpdate', updateObj, this._state);
+    
+    // Track changed paths
+    const changedPaths = [];
+    
+    // Create new state by merging the update
+    const newState = this._merge(this._state, processedUpdate, '', changedPaths);
+    
+    // If no changes, return current state
+    if (changedPaths.length === 0) {
+      this._log('No state changes detected');
+      return this._clone(this._state);
+    }
+    
+    // Update the state
+    this._state = newState;
+    
+    // Apply middleware after update
+    this.middleware.applyMiddleware('afterUpdate', this._state, changedPaths);
+    
+    this._log('State updated with paths:', changedPaths);
+    this._log('New state:', this._state);
+    
+    // Persist state if enabled
+    if (updateOptions.persist && this.options.enablePersistence) {
+      this.persistence.save(this._state);
+    }
+    
+    // Emit update event
+    this.emit('update', this._clone(this._state), changedPaths);
+    
+    // Notify subscribers if not silent
+    if (!updateOptions.silent) {
+      this._notifySubscribers(changedPaths);
+    }
+    
+    return this._clone(this._state);
+  }
+  
+  /**
+   * Reset the state to initial values
+   * @param {Object} initialState - New initial state
+   * @param {Object} options - Reset options
+   * @param {boolean} options.silent - Whether to suppress notifications (default: false)
+   * @param {boolean} options.persist - Whether to persist the reset (default: true if persistence is enabled)
+   * @returns {Object} The new state
+   */
+  resetState(initialState = {}, options = {}) {
+    // Default options
+    const resetOptions = {
+      silent: false,
+      persist: this.options.enablePersistence,
+      ...options
+    };
+    
+    // Apply middleware
+    const processedState = this.middleware.applyMiddleware('beforeReset', initialState);
+    
+    // Get all paths in current state
+    const allPaths = this._getAllPaths(this._state);
+    
+    // Update the state
+    this._state = this._clone(processedState);
+    
+    // Apply middleware after reset
+    this.middleware.applyMiddleware('afterReset', this._state);
+    
+    this._log('State reset to:', this._state);
+    
+    // Persist state if enabled
+    if (resetOptions.persist && this.options.enablePersistence) {
+      this.persistence.save(this._state);
+    }
+    
+    // Emit reset event
+    this.emit('reset', this._clone(this._state));
+    
+    // Notify subscribers if not silent
+    if (!resetOptions.silent) {
+      this._notifySubscribers(allPaths);
+    }
+    
+    return this._clone(this._state);
+  }
+  
+  /**
+   * Subscribe to state changes
+   * @param {Function} callback - Callback function
+   * @param {string|string[]} [paths] - Specific state path(s) to subscribe to
+   * @returns {Function} Unsubscribe function
+   */
+  subscribe(callback, paths) {
+    if (typeof callback !== 'function') {
+      throw new Error('Subscriber callback must be a function');
+    }
+    
+    // If no paths specified, subscribe to all state changes
+    if (paths === undefined) {
+      this._globalSubscribers.push(callback);
+      this._log('Added global subscriber');
       
-      // Update the value
-      target[prop] = value;
-      
-      // Only notify if the value actually changed
-      if (oldValue !== value) {
-        // Notify property-specific subscribers
-        if (propSubscribers.has(prop)) {
-          propSubscribers.get(prop).forEach(callback => {
-            try {
-              callback(value, oldValue);
-            } catch (error) {
-              console.error(`Error in subscriber callback for ${prop}:`, error);
-            }
-          });
+      // Return unsubscribe function
+      return () => {
+        const index = this._globalSubscribers.indexOf(callback);
+        if (index !== -1) {
+          this._globalSubscribers.splice(index, 1);
+          this._log('Removed global subscriber');
         }
+      };
+    }
+    
+    // Handle array of paths or single path
+    const pathArray = Array.isArray(paths) ? paths : [paths];
+    
+    // Normalize paths (convert dot notation to arrays)
+    const normalizedPaths = pathArray.map(path => 
+      typeof path === 'string' ? path.split('.') : path
+    );
+    
+    // Add subscriber for each path
+    normalizedPaths.forEach(path => {
+      const pathKey = Array.isArray(path) ? path.join('.') : path;
+      
+      if (!this._subscribers.has(pathKey)) {
+        this._subscribers.set(pathKey, []);
+      }
+      
+      this._subscribers.get(pathKey).push(callback);
+      this._log(`Added subscriber for path: ${pathKey}`);
+    });
+    
+    // Return unsubscribe function
+    return () => {
+      normalizedPaths.forEach(path => {
+        const pathKey = Array.isArray(path) ? path.join('.') : path;
+        const subscribers = this._subscribers.get(pathKey);
         
-        // Notify global subscribers
-        subscribers.forEach(callback => {
+        if (subscribers) {
+          const index = subscribers.indexOf(callback);
+          if (index !== -1) {
+            subscribers.splice(index, 1);
+            this._log(`Removed subscriber for path: ${pathKey}`);
+          }
+        }
+      });
+    };
+  }
+  
+  /**
+   * Unsubscribe a callback from all subscriptions
+   * @param {Function} callback - The callback to unsubscribe
+   */
+  unsubscribe(callback) {
+    // Remove from global subscribers
+    const globalIndex = this._globalSubscribers.indexOf(callback);
+    if (globalIndex !== -1) {
+      this._globalSubscribers.splice(globalIndex, 1);
+      this._log('Removed global subscriber');
+    }
+    
+    // Remove from path-specific subscribers
+    this._subscribers.forEach((subscribers, path) => {
+      const index = subscribers.indexOf(callback);
+      if (index !== -1) {
+        subscribers.splice(index, 1);
+        this._log(`Removed subscriber for path: ${path}`);
+      }
+    });
+  }
+  
+  /**
+   * Add middleware to the state manager
+   * @param {string} type - Middleware type ('beforeUpdate', 'afterUpdate', 'beforeReset', 'afterReset')
+   * @param {Function} middleware - Middleware function
+   * @returns {Function} Function to remove the middleware
+   */
+  use(type, middleware) {
+    return this.middleware.use(type, middleware);
+  }
+  
+  /**
+   * Create a selector function that memoizes the result
+   * @param {Function} selectorFn - Selector function that takes the state and returns a derived value
+   * @param {Function} [equalityFn] - Function to compare previous and current results
+   * @returns {Function} Memoized selector function
+   */
+  createSelector(selectorFn, equalityFn = (a, b) => a === b) {
+    let lastState = null;
+    let lastResult = null;
+    
+    return (...args) => {
+      const state = this.getState();
+      
+      // If state hasn't changed, return memoized result
+      if (lastState && this._shallowEqual(state, lastState)) {
+        return lastResult;
+      }
+      
+      // Calculate new result
+      const result = selectorFn(state, ...args);
+      
+      // If result is equal to last result, return last result
+      if (lastResult !== null && equalityFn(result, lastResult)) {
+        return lastResult;
+      }
+      
+      // Update memoized values
+      lastState = state;
+      lastResult = result;
+      
+      return result;
+    };
+  }
+  
+  /**
+   * Notify subscribers of state changes
+   * @param {string[]} changedPaths - Paths that changed
+   * @private
+   */
+  _notifySubscribers(changedPaths) {
+    this._log('Notifying subscribers for paths:', changedPaths);
+    
+    // Set to track which subscribers have been notified
+    const notifiedSubscribers = new Set();
+    
+    // First notify path-specific subscribers
+    changedPaths.forEach(path => {
+      // Convert array path to string
+      const pathKey = Array.isArray(path) ? path.join('.') : path;
+      
+      // Get subscribers for this exact path
+      const exactSubscribers = this._subscribers.get(pathKey);
+      if (exactSubscribers && exactSubscribers.length > 0) {
+        this._log(`Notifying ${exactSubscribers.length} subscribers for exact path: ${pathKey}`);
+        
+        exactSubscribers.forEach(callback => {
+          if (!notifiedSubscribers.has(callback)) {
+            try {
+              const value = this.getState(pathKey);
+              callback(value, pathKey, this._clone(this._state));
+              notifiedSubscribers.add(callback);
+            } catch (error) {
+              console.error(`Error in subscriber callback for path ${pathKey}:`, error);
+            }
+          }
+        });
+      }
+      
+      // Also notify subscribers of parent paths
+      if (typeof pathKey === 'string' && pathKey.includes('.')) {
+        const parts = pathKey.split('.');
+        
+        for (let i = 1; i < parts.length; i++) {
+          const parentPath = parts.slice(0, -i).join('.');
+          const parentSubscribers = this._subscribers.get(parentPath);
+          
+          if (parentSubscribers && parentSubscribers.length > 0) {
+            this._log(`Notifying ${parentSubscribers.length} subscribers for parent path: ${parentPath}`);
+            
+            parentSubscribers.forEach(callback => {
+              if (!notifiedSubscribers.has(callback)) {
+                try {
+                  const value = this.getState(parentPath);
+                  callback(value, parentPath, this._clone(this._state));
+                  notifiedSubscribers.add(callback);
+                } catch (error) {
+                  console.error(`Error in subscriber callback for parent path ${parentPath}:`, error);
+                }
+              }
+            });
+          }
+        }
+      }
+    });
+    
+    // Then notify global subscribers
+    if (this._globalSubscribers.length > 0) {
+      this._log(`Notifying ${this._globalSubscribers.length} global subscribers`);
+      
+      this._globalSubscribers.forEach(callback => {
+        if (!notifiedSubscribers.has(callback)) {
           try {
-            callback({ [prop]: value }, prop);
+            callback(this._clone(this._state), changedPaths);
           } catch (error) {
             console.error('Error in global subscriber callback:', error);
           }
-        });
+        }
+      });
+    }
+  }
+  
+  /**
+   * Get a nested value from an object using a path array
+   * @param {Object} obj - Object to get value from
+   * @param {string[]} path - Path to the value
+   * @returns {any} The value at the path
+   * @private
+   */
+  _getNestedValue(obj, path) {
+    let current = obj;
+    
+    for (let i = 0; i < path.length; i++) {
+      if (current === null || current === undefined) {
+        return undefined;
+      }
+      
+      current = current[path[i]];
+    }
+    
+    return this._clone(current);
+  }
+  
+  /**
+   * Set a nested value in an object using a path array
+   * @param {Object} obj - Object to set value in
+   * @param {string[]} path - Path to the value
+   * @param {any} value - Value to set
+   * @returns {Object} New object with the value set
+   * @private
+   */
+  _setNestedValue(obj, path, value) {
+    // Clone the object to avoid mutations
+    const result = this._clone(obj);
+    
+    if (path.length === 0) {
+      return value;
+    }
+    
+    let current = result;
+    
+    // Navigate to the parent of the property to set
+    for (let i = 0; i < path.length - 1; i++) {
+      const key = path[i];
+      
+      // If the current key doesn't exist or is not an object, create it
+      if (current[key] === undefined || current[key] === null || typeof current[key] !== 'object') {
+        current[key] = {};
+      }
+      
+      current = current[key];
+    }
+    
+    // Set the value at the final key
+    const lastKey = path[path.length - 1];
+    current[lastKey] = this._clone(value);
+    
+    return result;
+  }
+  
+  /**
+   * Merge two objects deeply
+   * @param {Object} target - Target object
+   * @param {Object} source - Source object
+   * @param {string} currentPath - Current path (for tracking changes)
+   * @param {string[]} changedPaths - Array to collect changed paths
+   * @returns {Object} Merged object
+   * @private
+   */
+  _merge(target, source, currentPath = '', changedPaths = []) {
+    // If source is not an object or is null, replace target
+    if (source === null || typeof source !== 'object' || Array.isArray(source)) {
+      // Check if the value has changed
+      if (!this._deepEqual(target, source)) {
+        changedPaths.push(currentPath);
+      }
+      return this._clone(source);
+    }
+    
+    // Clone the target to avoid mutations
+    const result = this._clone(target) || {};
+    
+    // Merge properties from source
+    for (const key in source) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) {
+        const sourceProp = source[key];
+        const targetProp = result[key];
+        const propPath = currentPath ? `${currentPath}.${key}` : key;
+        
+        // If target property is an object and source property is an object, merge recursively
+        if (
+          targetProp !== null && 
+          typeof targetProp === 'object' && 
+          !Array.isArray(targetProp) &&
+          sourceProp !== null && 
+          typeof sourceProp === 'object' && 
+          !Array.isArray(sourceProp)
+        ) {
+          result[key] = this._merge(targetProp, sourceProp, propPath, changedPaths);
+        } else {
+          // Otherwise, replace the target property
+          if (!this._deepEqual(targetProp, sourceProp)) {
+            changedPaths.push(propPath);
+          }
+          result[key] = this._clone(sourceProp);
+        }
+      }
+    }
+    
+    return result;
+  }
+  
+  /**
+   * Get all paths in an object
+   * @param {Object} obj - Object to get paths from
+   * @param {string} [currentPath=''] - Current path
+   * @param {string[]} [paths=[]] - Array to collect paths
+   * @returns {string[]} Array of paths
+   * @private
+   */
+  _getAllPaths(obj, currentPath = '', paths = []) {
+    // If not an object or null, add the current path
+    if (obj === null || typeof obj !== 'object') {
+      if (currentPath) {
+        paths.push(currentPath);
+      }
+      return paths;
+    }
+    
+    // Add the current path if it's not empty
+    if (currentPath) {
+      paths.push(currentPath);
+    }
+    
+    // Recursively get paths for all properties
+    for (const key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        const propPath = currentPath ? `${currentPath}.${key}` : key;
+        this._getAllPaths(obj[key], propPath, paths);
+      }
+    }
+    
+    return paths;
+  }
+  
+  /**
+   * Clone an object or value
+   * @param {any} value - Value to clone
+   * @returns {any} Cloned value
+   * @private
+   */
+  _clone(value) {
+    // If not using immutable state, return the value as is
+    if (!this.options.immutable) {
+      return value;
+    }
+    
+    // Handle null and undefined
+    if (value === null || value === undefined) {
+      return value;
+    }
+    
+    // Handle primitive types
+    if (typeof value !== 'object') {
+      return value;
+    }
+    
+    // Handle arrays
+    if (Array.isArray(value)) {
+      return value.map(item => this._clone(item));
+    }
+    
+    // Handle dates
+    if (value instanceof Date) {
+      return new Date(value);
+    }
+    
+    // Handle regular expressions
+    if (value instanceof RegExp) {
+      return new RegExp(value.source, value.flags);
+    }
+    
+    // Handle objects
+    const result = {};
+    for (const key in value) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        result[key] = this._clone(value[key]);
+      }
+    }
+    
+    return result;
+  }
+  
+  /**
+   * Check if two values are deeply equal
+   * @param {any} a - First value
+   * @param {any} b - Second value
+   * @returns {boolean} Whether the values are equal
+   * @private
+   */
+  _deepEqual(a, b) {
+    // Handle identical values
+    if (a === b) {
+      return true;
+    }
+    
+    // Handle null and undefined
+    if (a === null || b === null || a === undefined || b === undefined) {
+      return a === b;
+    }
+    
+    // Handle primitive types
+    if (typeof a !== 'object' || typeof b !== 'object') {
+      return a === b;
+    }
+    
+    // Handle arrays
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) {
+        return false;
+      }
+      
+      for (let i = 0; i < a.length; i++) {
+        if (!this._deepEqual(a[i], b[i])) {
+          return false;
+        }
       }
       
       return true;
     }
-  });
-  
-  // Create the store object
-  const store = {
-    // The reactive state object
-    state,
     
-    // Get the current state value
-    get(prop) {
-      return state[prop];
-    },
-    
-    // Set a state value
-    set(prop, value) {
-      state[prop] = value;
-      return value;
-    },
-    
-    // Update multiple state values at once
-    update(updates) {
-      Object.entries(updates).forEach(([key, value]) => {
-        state[key] = value;
-      });
-    },
-    
-    // Subscribe to all state changes
-    subscribe(callback) {
-      const id = Symbol();
-      subscribers.set(id, callback);
-      
-      // Return unsubscribe function
-      return () => {
-        subscribers.delete(id);
-      };
-    },
-    
-    // Subscribe to changes for a specific property
-    on(prop, callback) {
-      if (!propSubscribers.has(prop)) {
-        propSubscribers.set(prop, new Map());
-      }
-      
-      const id = Symbol();
-      propSubscribers.get(prop).set(id, callback);
-      
-      // Return unsubscribe function
-      return () => {
-        if (propSubscribers.has(prop)) {
-          propSubscribers.get(prop).delete(id);
-        }
-      };
-    },
-    
-    // Get a snapshot of the current state
-    getState() {
-      return { ...stateObj };
-    }
-  };
-  
-  // Store the store
-  stores.set(name, store);
-  
-  return store;
-}
-
-/**
- * Get an existing store by name
- * @param {string} name - Name of the store to get
- * @returns {object|null} - The store object or null if not found
- */
-export function getStore(name) {
-  return stores.get(name) || null;
-}
-
-/**
- * Create a default global store
- */
-export const defaultStore = createStore('default', {});
-
-/**
- * Create a mixin for web components to easily connect to a store
- * @param {object} store - The store to connect to
- * @returns {function} - A mixin function
- */
-export function StoreConnector(store = defaultStore) {
-  return (BaseClass) => {
-    return class extends BaseClass {
-      constructor() {
-        super();
-        this._unsubscribers = [];
-        this._boundElements = new Map();
-      }
-      
-      // Connect an element to a state property
-      bindElement(element, prop, formatter = (v) => v) {
-        if (!element) return;
-        
-        // Store the original element content as a template if it contains ${prop} syntax
-        let template = null;
-        if (element.textContent && element.textContent.includes('${')) {
-          template = element.textContent;
-        }
-        
-        const updateElement = (value) => {
-          if (template) {
-            // Replace all ${propName} occurrences with actual values
-            let content = template;
-            content = content.replace(/\${([^}]+)}/g, (match, propName) => {
-              return propName === prop ? formatter(value) : match;
-            });
-            element.textContent = content;
-          } else {
-            element.textContent = formatter(value);
-          }
-        };
-        
-        // Initial update
-        updateElement(store.state[prop]);
-        
-        // Subscribe to changes
-        const unsub = store.on(prop, updateElement);
-        this._unsubscribers.push(unsub);
-        
-        // Store the binding
-        this._boundElements.set(element, { prop, unsub });
-        
-        return this;
-      }
-      
-      // Bind an input element to a state property (two-way binding)
-      bindInput(input, prop) {
-        if (!input) return;
-        
-        // Set initial value
-        input.value = store.state[prop] || '';
-        
-        // Listen for input changes
-        const handler = () => {
-          store.state[prop] = input.value;
-        };
-        
-        input.addEventListener('input', handler);
-        
-        // Subscribe to state changes
-        const unsub = store.on(prop, (value) => {
-          if (input.value !== value) {
-            input.value = value;
-          }
-        });
-        
-        this._unsubscribers.push(unsub);
-        this._unsubscribers.push(() => input.removeEventListener('input', handler));
-        
-        return this;
-      }
-      
-      // Connect to specific state properties and update when they change
-      connect(props, callback) {
-        if (!Array.isArray(props)) {
-          props = [props];
-        }
-        
-        // Create a handler that checks if any of the watched props changed
-        const handler = (update, changedProp) => {
-          if (props.includes(changedProp)) {
-            callback(store.state);
-          }
-        };
-        
-        // Subscribe to state changes
-        const unsub = store.subscribe(handler);
-        this._unsubscribers.push(unsub);
-        
-        // Initial call
-        callback(store.state);
-        
-        return this;
-      }
-      
-      // Clean up all subscriptions when the element is removed
-      disconnectedCallback() {
-        this._unsubscribers.forEach(unsub => unsub());
-        this._unsubscribers = [];
-        
-        // Call the parent disconnectedCallback if it exists
-        if (super.disconnectedCallback) {
-          super.disconnectedCallback();
-        }
-      }
-    };
-  };
-}
-
-/**
- * Create a reactive element that automatically updates when state changes
- * @param {string} tagName - The tag name for the custom element
- * @param {object} options - Options for the element
- * @param {object} store - The store to connect to
- */
-export function defineReactiveElement(tagName, options, store = defaultStore) {
-  const { template, styles, props = [] } = options;
-  
-  class ReactiveElement extends HTMLElement {
-    constructor() {
-      super();
-      this.attachShadow({ mode: 'open' });
-      this._unsubscribers = [];
+    // Handle dates
+    if (a instanceof Date && b instanceof Date) {
+      return a.getTime() === b.getTime();
     }
     
-    connectedCallback() {
-      this.render();
-      this.setupBindings();
+    // Handle regular expressions
+    if (a instanceof RegExp && b instanceof RegExp) {
+      return a.source === b.source && a.flags === b.flags;
     }
     
-    disconnectedCallback() {
-      this._unsubscribers.forEach(unsub => unsub());
-      this._unsubscribers = [];
+    // Handle objects
+    if (!Array.isArray(a) && !Array.isArray(b)) {
+      const keysA = Object.keys(a);
+      const keysB = Object.keys(b);
+      
+      if (keysA.length !== keysB.length) {
+        return false;
+      }
+      
+      for (const key of keysA) {
+        if (!Object.prototype.hasOwnProperty.call(b, key)) {
+          return false;
+        }
+        
+        if (!this._deepEqual(a[key], b[key])) {
+          return false;
+        }
+      }
+      
+      return true;
     }
     
-    render() {
-      // Create a template element
-      const templateEl = document.createElement('template');
-      
-      // Add styles and content
-      templateEl.innerHTML = `
-        <style>${styles || ''}</style>
-        ${typeof template === 'function' ? template(store.state) : template}
-      `;
-      
-      // Clear and append
-      this.shadowRoot.innerHTML = '';
-      this.shadowRoot.appendChild(templateEl.content.cloneNode(true));
-    }
-    
-    setupBindings() {
-      // Find all elements with data-bind attribute
-      const boundElements = this.shadowRoot.querySelectorAll('[data-bind]');
-      boundElements.forEach(el => {
-        const prop = el.getAttribute('data-bind');
-        if (props.includes(prop)) {
-          // Update element when state changes
-          const updateEl = () => {
-            el.textContent = store.state[prop];
-          };
-          
-          // Initial update
-          updateEl();
-          
-          // Subscribe to changes
-          const unsub = store.on(prop, updateEl);
-          this._unsubscribers.push(unsub);
-        }
-      });
-      
-      // Find all inputs with data-model attribute (two-way binding)
-      const modelElements = this.shadowRoot.querySelectorAll('[data-model]');
-      modelElements.forEach(el => {
-        const prop = el.getAttribute('data-model');
-        if (props.includes(prop)) {
-          // Set initial value
-          el.value = store.state[prop] || '';
-          
-          // Listen for input changes
-          const handler = () => {
-            store.state[prop] = el.value;
-          };
-          
-          el.addEventListener('input', handler);
-          
-          // Subscribe to state changes
-          const unsub = store.on(prop, (value) => {
-            if (el.value !== value) {
-              el.value = value;
-            }
-          });
-          
-          this._unsubscribers.push(unsub);
-          this._unsubscribers.push(() => el.removeEventListener('input', handler));
-        }
-      });
-      
-      // Find all elements with data-click attribute
-      const clickElements = this.shadowRoot.querySelectorAll('[data-click]');
-      clickElements.forEach(el => {
-        const actionName = el.getAttribute('data-click');
-        if (typeof this[actionName] === 'function') {
-          el.addEventListener('click', this[actionName].bind(this));
-        }
-      });
-    }
+    return false;
   }
   
-  // Define the custom element
-  customElements.define(tagName, ReactiveElement);
+  /**
+   * Check if two objects are shallowly equal
+   * @param {Object} a - First object
+   * @param {Object} b - Second object
+   * @returns {boolean} Whether the objects are equal
+   * @private
+   */
+  _shallowEqual(a, b) {
+    if (a === b) {
+      return true;
+    }
+    
+    if (a === null || b === null || a === undefined || b === undefined) {
+      return a === b;
+    }
+    
+    if (typeof a !== 'object' || typeof b !== 'object') {
+      return a === b;
+    }
+    
+    const keysA = Object.keys(a);
+    const keysB = Object.keys(b);
+    
+    if (keysA.length !== keysB.length) {
+      return false;
+    }
+    
+    for (const key of keysA) {
+      if (!Object.prototype.hasOwnProperty.call(b, key) || a[key] !== b[key]) {
+        return false;
+      }
+    }
+    
+    return true;
+  }
   
-  return ReactiveElement;
+  /**
+   * Log debug messages if debug is enabled
+   * @private
+   */
+  _log(...args) {
+    if (this.options.debug) {
+      console.log('[StateManager]', ...args);
+    }
+  }
 }
 
-// Export a default instance
-export default {
-  createStore,
-  getStore,
-  defaultStore,
-  StoreConnector,
-  defineReactiveElement
-};
+/**
+ * Create a new StateManager
+ * @param {Object} initialState - Initial state
+ * @param {Object} options - Configuration options
+ * @returns {StateManager} StateManager instance
+ */
+export function createStateManager(initialState = {}, options = {}) {
+  return new StateManager(initialState, options);
+}
+
+// Create a default instance
+export const defaultStateManager = createStateManager({}, {
+  enablePersistence: true,
+  persistenceKey: 'app_state',
+  debug: false
+});
+
+// Export the StateManager class
+export { StateManager };
+
+// Export utilities
+export { createPersistenceManager } from './persistence.js';
+export { createWebComponentIntegration, StateMixin, createConnectedComponent } from './web-components.js';
+export { createMiddlewareManager } from './middleware.js';
+
+// Default export
+export default defaultStateManager;

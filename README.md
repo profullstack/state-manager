@@ -1,154 +1,488 @@
 # @profullstack/state-manager
 
-A simplified state management system inspired by Svelte's reactivity model.
+Enhanced state manager with web component integration, persistence, and subscription management.
 
 ## Features
 
-- Uses JavaScript Proxies to create reactive state objects
-- Automatically triggers updates when properties change
-- Provides a clean, intuitive API similar to Svelte's approach
-- Includes utilities for binding elements directly to state properties
-- Works with web components and vanilla JavaScript
+- **Path-Based State Access**: Access and update nested state using dot notation paths
+- **Immutable Updates**: Immutable state updates to prevent unintended side effects
+- **Persistence**: Configurable state persistence with multiple storage adapters
+- **Web Component Integration**: Seamless integration with web components
+- **Middleware Support**: Extensible middleware system for intercepting state changes
+- **Selectors**: Memoized selectors for derived state
+- **TypeScript Support**: Full TypeScript type definitions
+- **Framework Agnostic**: Works with any framework or vanilla JavaScript
 
 ## Installation
 
 ```bash
 npm install @profullstack/state-manager
-# or
-pnpm add @profullstack/state-manager
-# or
-yarn add @profullstack/state-manager
 ```
 
-### Direct Usage via ESM.sh
-
-For direct usage in the browser without installation, you can use ESM.sh:
+## Basic Usage
 
 ```javascript
-import { createStore, StoreConnector } from 'https://esm.sh/@profullstack/state-manager@1.0.0';
-```
+import { createStateManager } from '@profullstack/state-manager';
 
-This is particularly useful for client-side applications where you want to import the module directly in your HTML or JavaScript files without a build step.
-
-## Usage
-
-### Basic Usage
-
-```javascript
-import { createStore } from '@profullstack/state-manager';
-
-// Create a store
-const store = createStore('app', {
-  count: 0,
-  theme: 'light',
-  user: { loggedIn: false }
+// Create a state manager with initial state
+const stateManager = createStateManager({
+  user: {
+    name: 'John Doe',
+    preferences: {
+      theme: 'light'
+    }
+  },
+  todos: [
+    { id: 1, text: 'Learn state management', completed: false }
+  ]
 });
-
-// Update state directly
-store.state.count++;
-store.state.theme = 'dark';
 
 // Get state
-const { count, theme } = store.state;
-console.log(count, theme); // 1, 'dark'
+const user = stateManager.getState('user');
+const theme = stateManager.getState('user.preferences.theme');
+const firstTodo = stateManager.getState('todos.0');
 
-// Subscribe to changes
-store.subscribe(({ count }) => {
-  console.log('Count changed:', count);
+// Update state
+stateManager.setState({
+  'user.preferences.theme': 'dark'
 });
 
-// Subscribe to specific property changes
-store.on('theme', (newTheme) => {
-  console.log('Theme changed to:', newTheme);
-  document.documentElement.setAttribute('data-theme', newTheme);
+// Update state with a function
+stateManager.setState(state => ({
+  todos: [
+    ...state.todos,
+    { id: 2, text: 'Build an app', completed: false }
+  ]
+}));
+
+// Subscribe to state changes
+const unsubscribe = stateManager.subscribe((state, changedPaths) => {
+  console.log('State changed:', state);
+  console.log('Changed paths:', changedPaths);
+});
+
+// Subscribe to specific path
+const themeUnsubscribe = stateManager.subscribe((theme, path) => {
+  console.log(`Theme changed to: ${theme}`);
+}, 'user.preferences.theme');
+
+// Unsubscribe when done
+unsubscribe();
+themeUnsubscribe();
+```
+
+## API Reference
+
+### Creating a State Manager
+
+```javascript
+import { createStateManager } from '@profullstack/state-manager';
+
+const stateManager = createStateManager(initialState, {
+  // Whether to use immutable state (default: true)
+  immutable: true,
+  
+  // Whether to enable persistence (default: false)
+  enablePersistence: true,
+  
+  // Key for persistence storage (default: 'app_state')
+  persistenceKey: 'my_app_state',
+  
+  // Persistence adapter (default: localStorage)
+  persistenceAdapter: null,
+  
+  // Keys to persist (default: all)
+  persistentKeys: ['user', 'settings'],
+  
+  // Whether to enable debug logging (default: false)
+  debug: false
 });
 ```
 
-### With Web Components
+### State Operations
+
+#### Getting State
 
 ```javascript
-import { createStore, StoreConnector } from '@profullstack/state-manager';
+// Get entire state
+const state = stateManager.getState();
 
-// Create a store
-const counterStore = createStore('counter', {
-  count: 0,
-  theme: 'light'
+// Get specific path
+const user = stateManager.getState('user');
+
+// Get nested path
+const theme = stateManager.getState('user.preferences.theme');
+
+// Get array item
+const firstTodo = stateManager.getState('todos.0');
+
+// Get with array path
+const theme = stateManager.getState(['user', 'preferences', 'theme']);
+```
+
+#### Updating State
+
+```javascript
+// Update top-level properties
+stateManager.setState({
+  user: { name: 'Jane Doe' },
+  loading: false
 });
 
-// Define a component that uses the store
-class CounterBase extends HTMLElement {
+// Update nested properties
+stateManager.setState({
+  'user.preferences.theme': 'dark',
+  'todos.0.completed': true
+});
+
+// Update with a function (for state that depends on previous state)
+stateManager.setState(state => ({
+  counter: state.counter + 1,
+  todos: [...state.todos, { id: Date.now(), text: 'New todo', completed: false }]
+}));
+
+// Update with options
+stateManager.setState({ loading: false }, {
+  // Don't notify subscribers (default: false)
+  silent: true,
+  
+  // Don't persist the update (default: false if persistence is enabled)
+  persist: false
+});
+```
+
+#### Resetting State
+
+```javascript
+// Reset to empty state
+stateManager.resetState();
+
+// Reset to new initial state
+stateManager.resetState({
+  user: { name: 'New User' },
+  todos: []
+});
+
+// Reset with options
+stateManager.resetState(newState, {
+  // Don't notify subscribers (default: false)
+  silent: true,
+  
+  // Don't persist the reset (default: false if persistence is enabled)
+  persist: false
+});
+```
+
+### Subscriptions
+
+#### Subscribing to State Changes
+
+```javascript
+// Subscribe to all state changes
+const unsubscribe = stateManager.subscribe((state, changedPaths) => {
+  console.log('State changed:', state);
+  console.log('Changed paths:', changedPaths);
+});
+
+// Subscribe to specific path
+const userUnsubscribe = stateManager.subscribe((userData, path, fullState) => {
+  console.log(`User changed: ${userData.name}`);
+}, 'user');
+
+// Subscribe to nested path
+const themeUnsubscribe = stateManager.subscribe((theme, path, fullState) => {
+  console.log(`Theme changed to: ${theme}`);
+}, 'user.preferences.theme');
+
+// Subscribe to multiple paths
+const multiUnsubscribe = stateManager.subscribe((value, path, fullState) => {
+  console.log(`Path ${path} changed to:`, value);
+}, ['user.name', 'todos']);
+```
+
+#### Unsubscribing
+
+```javascript
+// Unsubscribe using the returned function
+unsubscribe();
+userUnsubscribe();
+
+// Unsubscribe a specific callback from all subscriptions
+stateManager.unsubscribe(myCallback);
+```
+
+### Selectors
+
+```javascript
+// Create a selector for derived state
+const getCompletedTodos = stateManager.createSelector(state => {
+  return state.todos.filter(todo => todo.completed);
+});
+
+// Use the selector
+const completedTodos = getCompletedTodos();
+
+// Create a selector with custom equality function
+const getTodoById = stateManager.createSelector(
+  (state, id) => state.todos.find(todo => todo.id === id),
+  (a, b) => a && b && a.id === b.id && a.completed === b.completed
+);
+
+// Use the selector with arguments
+const todo = getTodoById(1);
+```
+
+### Middleware
+
+```javascript
+import { createStateManager, createLoggerMiddleware } from '@profullstack/state-manager';
+
+const stateManager = createStateManager(initialState);
+
+// Create logger middleware
+const logger = createLoggerMiddleware({
+  logBefore: true,
+  logAfter: true,
+  logger: console.log
+});
+
+// Add middleware
+stateManager.use('beforeUpdate', logger.beforeUpdate);
+stateManager.use('afterUpdate', logger.afterUpdate);
+
+// Add custom middleware
+stateManager.use('beforeUpdate', (update, state) => {
+  // Validate update
+  if (update.user && !update.user.name) {
+    throw new Error('User name is required');
+  }
+  return update;
+});
+
+// Remove middleware
+const removeMiddleware = stateManager.use('afterUpdate', (state, changedPaths) => {
+  // Do something after update
+  return state;
+});
+
+removeMiddleware(); // Remove the middleware
+```
+
+### Persistence
+
+```javascript
+import { 
+  createStateManager, 
+  createLocalStorageAdapter,
+  createSessionStorageAdapter,
+  createIndexedDBAdapter
+} from '@profullstack/state-manager';
+
+// Use localStorage (default)
+const stateManager1 = createStateManager(initialState, {
+  enablePersistence: true,
+  persistenceKey: 'app_state'
+});
+
+// Use sessionStorage
+const stateManager2 = createStateManager(initialState, {
+  enablePersistence: true,
+  persistenceKey: 'app_state',
+  persistenceAdapter: createSessionStorageAdapter()
+});
+
+// Use IndexedDB
+const stateManager3 = createStateManager(initialState, {
+  enablePersistence: true,
+  persistenceKey: 'app_state',
+  persistenceAdapter: createIndexedDBAdapter('myDB', 'state')
+});
+
+// Persist only specific keys
+const stateManager4 = createStateManager(initialState, {
+  enablePersistence: true,
+  persistentKeys: ['user', 'settings']
+});
+
+// Manually save/load state
+stateManager.persistence.save(state);
+const savedState = stateManager.persistence.load();
+stateManager.persistence.clear();
+```
+
+## Web Component Integration
+
+### Creating Connected Components
+
+```javascript
+import { createStateManager } from '@profullstack/state-manager';
+
+const stateManager = createStateManager(initialState);
+const { createConnectedComponent } = stateManager.webComponents;
+
+// Create a connected component
+class TodoListElement extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
   }
-
-  connectedCallback() {
+  
+  // Called when state changes
+  stateChanged(state, path, fullState) {
     this.render();
-    this.setupEventListeners();
-    
-    // Bind elements to state properties
-    this.bindElement(
-      this.shadowRoot.querySelector('.counter-value'),
-      'count',
-      (value) => `Counter: ${value}`
-    );
   }
   
+  // Render the component
   render() {
-    const { count } = counterStore.state;
+    const todos = this.getState('todos');
     
     this.shadowRoot.innerHTML = `
-      <div>
-        <div class="counter-value">Counter: ${count}</div>
-        <button id="increment">Increment</button>
-      </div>
+      <ul>
+        ${todos.map(todo => `
+          <li class="${todo.completed ? 'completed' : ''}">
+            ${todo.text}
+          </li>
+        `).join('')}
+      </ul>
     `;
-  }
-  
-  setupEventListeners() {
-    this.shadowRoot.getElementById('increment').addEventListener('click', () => {
-      counterStore.state.count++;
-    });
   }
 }
 
-// Create the connected component using the StoreConnector mixin
-const Counter = StoreConnector(counterStore)(CounterBase);
+// Register the component
+createConnectedComponent('todo-list', TodoListElement, {
+  statePaths: ['todos'],
+  mapStateToProps: state => ({
+    completedCount: state.todos.filter(todo => todo.completed).length
+  }),
+  actions: {
+    addTodo(text) {
+      this.setState(state => ({
+        todos: [
+          ...state.todos,
+          { id: Date.now(), text, completed: false }
+        ]
+      }));
+    },
+    toggleTodo(id) {
+      this.setState(state => ({
+        todos: state.todos.map(todo =>
+          todo.id === id ? { ...todo, completed: !todo.completed } : todo
+        )
+      }));
+    }
+  }
+});
 
-// Register the custom element
-customElements.define('my-counter', Counter);
+// Use the component in HTML
+// <todo-list></todo-list>
 ```
 
-## API
+### Using the State Mixin
 
-### `createStore(name, initialState)`
+```javascript
+import { createStateManager, StateMixin } from '@profullstack/state-manager';
 
-Creates a new store with the given name and initial state.
+const stateManager = createStateManager(initialState);
+const withState = StateMixin(stateManager);
 
-- `name`: A unique name for the store
-- `initialState`: The initial state object
+// Create a component with state
+class MyComponent extends withState({
+  statePaths: ['user'],
+  mapStateToProps: state => ({
+    userName: state.user.name,
+    theme: state.user.preferences.theme
+  })
+})(HTMLElement) {
+  constructor() {
+    super();
+    this.attachShadow({ mode: 'open' });
+  }
+  
+  connectedCallback() {
+    super.connectedCallback();
+    this.render();
+  }
+  
+  stateChanged(state, path, fullState) {
+    this.render();
+  }
+  
+  render() {
+    this.shadowRoot.innerHTML = `
+      <div class="theme-${this.theme}">
+        <h1>Hello, ${this.userName}!</h1>
+      </div>
+    `;
+  }
+}
 
-Returns a store object with the following properties:
+customElements.define('my-component', MyComponent);
+```
 
-- `state`: The reactive state object
-- `subscribe(callback)`: Subscribe to all state changes
-- `on(property, callback)`: Subscribe to changes for a specific property
-- `get(property)`: Get a state value
-- `set(property, value)`: Set a state value
-- `update(updates)`: Update multiple state values at once
-- `getState()`: Get a snapshot of the current state
+### LitElement Integration
 
-### `StoreConnector(store)`
+```javascript
+import { LitElement, html } from 'lit';
+import { createStateManager } from '@profullstack/state-manager';
 
-A mixin factory that connects a web component to a store.
+const stateManager = createStateManager(initialState);
+const { createLitElementConnector } = stateManager.webComponents;
 
-- `store`: The store to connect to
+// Create a LitElement connector
+const withState = createLitElementConnector({
+  statePaths: ['todos'],
+  mapStateToProps: state => ({
+    todos: state.todos,
+    completedCount: state.todos.filter(todo => todo.completed).length
+  })
+});
 
-Returns a mixin function that adds the following methods to the component:
+// Create a LitElement component with state
+class TodoList extends withState(LitElement) {
+  static properties = {
+    todos: { type: Array },
+    completedCount: { type: Number }
+  };
+  
+  render() {
+    return html`
+      <h2>Todo List (${this.completedCount}/${this.todos.length} completed)</h2>
+      <ul>
+        ${this.todos.map(todo => html`
+          <li class="${todo.completed ? 'completed' : ''}">
+            <input type="checkbox" ?checked=${todo.completed} @change=${() => this.toggleTodo(todo.id)}>
+            ${todo.text}
+          </li>
+        `)}
+      </ul>
+      <button @click=${this.addTodo}>Add Todo</button>
+    `;
+  }
+  
+  addTodo() {
+    this.setState(state => ({
+      todos: [
+        ...state.todos,
+        { id: Date.now(), text: `New todo ${Date.now()}`, completed: false }
+      ]
+    }));
+  }
+  
+  toggleTodo(id) {
+    this.setState(state => ({
+      todos: state.todos.map(todo =>
+        todo.id === id ? { ...todo, completed: !todo.completed } : todo
+      )
+    }));
+  }
+}
 
-- `bindElement(element, property, formatter)`: Bind an element to a state property
-- `bindInput(input, property)`: Bind an input element to a state property (two-way binding)
-- `connect(properties, callback)`: Connect to specific state properties and update when they change
+customElements.define('todo-list', TodoList);
+```
+
+## Examples
+
+See the [examples](./examples) directory for complete usage examples.
 
 ## License
 
