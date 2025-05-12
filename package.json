@@ -1,6 +1,6 @@
 {
   "name": "@profullstack/state-manager",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "description": "Enhanced state manager with web component integration, persistence, and subscription management",
   "type": "module",
   "main": "dist/index.js",
