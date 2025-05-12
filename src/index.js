@@ -751,7 +751,7 @@ export { StateManager };
 
 // Export utilities
 export { createPersistenceManager } from './persistence.js';
-export { createWebComponentIntegration, StateMixin, createConnectedComponent } from './web-components.js';
+export { createWebComponentIntegration, StateMixin, createConnectedComponent, StoreConnector } from './web-components.js';
 export { createMiddlewareManager } from './middleware.js';
 
 // Default export

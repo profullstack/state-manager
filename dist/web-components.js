@@ -467,4 +467,7 @@ export function createConnectedComponent(tagName, BaseComponent, options = {}, s
   return integration.createConnectedComponent(tagName, BaseComponent, options);
 }
 
+// Import and re-export StoreConnector
+export { StoreConnector } from './store-connector.js';
+
 export default createWebComponentIntegration;
