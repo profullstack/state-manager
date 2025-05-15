@@ -1,6 +1,6 @@
 /**
  * @profullstack/state-manager
- * 
+ *
  * Enhanced state manager with web component integration, persistence, and subscription management
  */
 
@@ -8,6 +8,9 @@ import EventEmitter from 'eventemitter3';
 import { createPersistenceManager } from './persistence.js';
 import { createWebComponentIntegration } from './web-components.js';
 import { createMiddlewareManager } from './middleware.js';
+import logger from '../logger.js';
+
+logger.info('Initializing state-manager module');
 
 /**
  * Enhanced State Manager
@@ -28,6 +31,8 @@ class StateManager extends EventEmitter {
   constructor(initialState = {}, options = {}) {
     super();
     
+    logger.debug('StateManager constructor called with options:', options);
+    
     // Default options
     this.options = {
       enablePersistence: false,
@@ -41,12 +46,15 @@ class StateManager extends EventEmitter {
     
     // Initialize state
     this._state = this._clone(initialState);
+    logger.debug('Initial state cloned');
     
     // Initialize subscribers
     this._subscribers = new Map();
     this._globalSubscribers = [];
+    logger.debug('Subscribers initialized');
     
     // Initialize persistence
+    logger.debug('Initializing persistence manager');
     this.persistence = createPersistenceManager({
       enabled: this.options.enablePersistence,
       key: this.options.persistenceKey,
@@ -55,15 +63,19 @@ class StateManager extends EventEmitter {
     });
     
     // Initialize middleware manager
+    logger.debug('Initializing middleware manager');
     this.middleware = createMiddlewareManager();
     
     // Initialize web component integration
+    logger.debug('Initializing web component integration');
     this.webComponents = createWebComponentIntegration(this);
     
     // Load persisted state if enabled
     if (this.options.enablePersistence) {
+      logger.debug('Loading persisted state');
       const persistedState = this.persistence.load();
       if (persistedState) {
+        logger.debug('Persisted state found, merging with initial state');
         this._state = this._merge(this._state, persistedState);
       }
     }
@@ -77,6 +89,7 @@ class StateManager extends EventEmitter {
     this.use = this.use.bind(this);
     
     this._log('StateManager initialized with state:', this._state);
+    logger.info('StateManager instance created');
   }
   
   /**
@@ -114,6 +127,8 @@ class StateManager extends EventEmitter {
    * @returns {Object} The new state
    */
   setState(update, options = {}) {
+    logger.debug('setState called with options:', options);
+    
     // Default options
     const updateOptions = {
       silent: false,
@@ -122,22 +137,27 @@ class StateManager extends EventEmitter {
     };
     
     // Handle function updates (for state that depends on previous state)
-    const updateObj = typeof update === 'function' 
-      ? update(this._clone(this._state)) 
+    const updateObj = typeof update === 'function'
+      ? update(this._clone(this._state))
       : update;
     
+    logger.debug('Update object prepared:', typeof updateObj === 'object' ? 'object' : updateObj);
+    
     // Apply middleware
+    logger.debug('Applying beforeUpdate middleware');
     const processedUpdate = this.middleware.applyMiddleware('beforeUpdate', updateObj, this._state);
     
     // Track changed paths
     const changedPaths = [];
     
     // Create new state by merging the update
+    logger.debug('Merging state with update');
     const newState = this._merge(this._state, processedUpdate, '', changedPaths);
     
     // If no changes, return current state
     if (changedPaths.length === 0) {
       this._log('No state changes detected');
+      logger.debug('No state changes detected');
       return this._clone(this._state);
     }
     
@@ -145,21 +165,25 @@ class StateManager extends EventEmitter {
     this._state = newState;
     
     // Apply middleware after update
+    logger.debug('Applying afterUpdate middleware');
     this.middleware.applyMiddleware('afterUpdate', this._state, changedPaths);
     
     this._log('State updated with paths:', changedPaths);
-    this._log('New state:', this._state);
+    logger.debug('State updated with paths:', changedPaths);
     
     // Persist state if enabled
     if (updateOptions.persist && this.options.enablePersistence) {
+      logger.debug('Persisting updated state');
       this.persistence.save(this._state);
     }
     
     // Emit update event
+    logger.debug('Emitting update event');
     this.emit('update', this._clone(this._state), changedPaths);
     
     // Notify subscribers if not silent
     if (!updateOptions.silent) {
+      logger.debug('Notifying subscribers');
       this._notifySubscribers(changedPaths);
     }
     
@@ -219,14 +243,19 @@ class StateManager extends EventEmitter {
    * @returns {Function} Unsubscribe function
    */
   subscribe(callback, paths) {
+    logger.debug('subscribe called with paths:', paths);
+    
     if (typeof callback !== 'function') {
-      throw new Error('Subscriber callback must be a function');
+      const error = new Error('Subscriber callback must be a function');
+      logger.error('Subscribe error:', error);
+      throw error;
     }
     
     // If no paths specified, subscribe to all state changes
     if (paths === undefined) {
       this._globalSubscribers.push(callback);
       this._log('Added global subscriber');
+      logger.debug('Added global subscriber');
       
       // Return unsubscribe function
       return () => {
@@ -234,6 +263,7 @@ class StateManager extends EventEmitter {
         if (index !== -1) {
           this._globalSubscribers.splice(index, 1);
           this._log('Removed global subscriber');
+          logger.debug('Removed global subscriber');
         }
       };
     }
@@ -242,9 +272,11 @@ class StateManager extends EventEmitter {
     const pathArray = Array.isArray(paths) ? paths : [paths];
     
     // Normalize paths (convert dot notation to arrays)
-    const normalizedPaths = pathArray.map(path => 
+    const normalizedPaths = pathArray.map(path =>
       typeof path === 'string' ? path.split('.') : path
     );
+    
+    logger.debug('Normalized paths:', normalizedPaths.map(p => Array.isArray(p) ? p.join('.') : p));
     
     // Add subscriber for each path
     normalizedPaths.forEach(path => {
@@ -256,6 +288,7 @@ class StateManager extends EventEmitter {
       
       this._subscribers.get(pathKey).push(callback);
       this._log(`Added subscriber for path: ${pathKey}`);
+      logger.debug(`Added subscriber for path: ${pathKey}`);
     });
     
     // Return unsubscribe function
@@ -269,6 +302,7 @@ class StateManager extends EventEmitter {
           if (index !== -1) {
             subscribers.splice(index, 1);
             this._log(`Removed subscriber for path: ${pathKey}`);
+            logger.debug(`Removed subscriber for path: ${pathKey}`);
           }
         }
       });
@@ -348,6 +382,7 @@ class StateManager extends EventEmitter {
    */
   _notifySubscribers(changedPaths) {
     this._log('Notifying subscribers for paths:', changedPaths);
+    logger.debug('Notifying subscribers for paths:', changedPaths);
     
     // Set to track which subscribers have been notified
     const notifiedSubscribers = new Set();
@@ -361,6 +396,7 @@ class StateManager extends EventEmitter {
       const exactSubscribers = this._subscribers.get(pathKey);
       if (exactSubscribers && exactSubscribers.length > 0) {
         this._log(`Notifying ${exactSubscribers.length} subscribers for exact path: ${pathKey}`);
+        logger.debug(`Notifying ${exactSubscribers.length} subscribers for exact path: ${pathKey}`);
         
         exactSubscribers.forEach(callback => {
           if (!notifiedSubscribers.has(callback)) {
@@ -369,6 +405,7 @@ class StateManager extends EventEmitter {
               callback(value, pathKey, this._clone(this._state));
               notifiedSubscribers.add(callback);
             } catch (error) {
+              logger.error(`Error in subscriber callback for path ${pathKey}:`, error);
               console.error(`Error in subscriber callback for path ${pathKey}:`, error);
             }
           }
@@ -385,6 +422,7 @@ class StateManager extends EventEmitter {
           
           if (parentSubscribers && parentSubscribers.length > 0) {
             this._log(`Notifying ${parentSubscribers.length} subscribers for parent path: ${parentPath}`);
+            logger.debug(`Notifying ${parentSubscribers.length} subscribers for parent path: ${parentPath}`);
             
             parentSubscribers.forEach(callback => {
               if (!notifiedSubscribers.has(callback)) {
@@ -393,6 +431,7 @@ class StateManager extends EventEmitter {
                   callback(value, parentPath, this._clone(this._state));
                   notifiedSubscribers.add(callback);
                 } catch (error) {
+                  logger.error(`Error in subscriber callback for parent path ${parentPath}:`, error);
                   console.error(`Error in subscriber callback for parent path ${parentPath}:`, error);
                 }
               }
@@ -405,12 +444,14 @@ class StateManager extends EventEmitter {
     // Then notify global subscribers
     if (this._globalSubscribers.length > 0) {
       this._log(`Notifying ${this._globalSubscribers.length} global subscribers`);
+      logger.debug(`Notifying ${this._globalSubscribers.length} global subscribers`);
       
       this._globalSubscribers.forEach(callback => {
         if (!notifiedSubscribers.has(callback)) {
           try {
             callback(this._clone(this._state), changedPaths);
           } catch (error) {
+            logger.error('Error in global subscriber callback:', error);
             console.error('Error in global subscriber callback:', error);
           }
         }
@@ -736,10 +777,12 @@ class StateManager extends EventEmitter {
  * @returns {StateManager} StateManager instance
  */
 export function createStateManager(initialState = {}, options = {}) {
+  logger.debug('Creating state manager with options:', options);
   return new StateManager(initialState, options);
 }
 
 // Create a default instance
+logger.info('Creating default state manager instance');
 export const defaultStateManager = createStateManager({}, {
   enablePersistence: true,
   persistenceKey: 'app_state',
