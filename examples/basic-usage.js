@@ -231,97 +231,92 @@ async function runExamples() {
     console.log();
     
     // Example 8: Web Component Integration
-    if (typeof window !== 'undefined' && typeof customElements !== 'undefined') {
-      console.log('Example 8: Web Component Integration');
-      
-      // Create a connected component
-      const { createConnectedComponent } = stateManager.webComponents;
-      
-      class TodoListElement extends HTMLElement {
-        constructor() {
-          super();
-          this.attachShadow({ mode: 'open' });
-        }
-        
-        connectedCallback() {
-          this.render();
-        }
-        
-        stateChanged(state, path, fullState) {
-          console.log(`TodoList component received state change for path: ${path}`);
-          this.render();
-        }
-        
-        render() {
-          const todos = this.getState('todos');
-          
-          this.shadowRoot.innerHTML = `
-            <style>
-              :host {
-                display: block;
-                font-family: sans-serif;
-              }
-              ul {
-                list-style: none;
-                padding: 0;
-              }
-              li {
-                padding: 8px;
-                margin-bottom: 4px;
-                background-color: #f5f5f5;
-                border-radius: 4px;
-              }
-              .completed {
-                text-decoration: line-through;
-                opacity: 0.7;
-              }
-            </style>
-            <h2>Todo List</h2>
-            <ul>
-              ${todos.map(todo => `
-                <li class="${todo.completed ? 'completed' : ''}">
-                  ${todo.text}
-                </li>
-              `).join('')}
-            </ul>
-            <button id="add">Add Todo</button>
-          `;
-          
-          // Add event listener to add button
-          this.shadowRoot.querySelector('#add').addEventListener('click', () => {
-            const newTodo = {
-              id: Date.now(),
-              text: `New todo ${Date.now()}`,
-              completed: false
-            };
-            
-            this.setState(state => ({
-              todos: [...state.todos, newTodo]
-            }));
-          });
-        }
+    console.log('Example 8: Web Component Integration');
+    
+    // Create a connected component
+    const { createConnectedComponent } = stateManager.webComponents;
+    
+    class TodoListElement extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
       }
       
-      createConnectedComponent('todo-list', TodoListElement, {
-        statePaths: ['todos']
-      });
+      connectedCallback() {
+        this.render();
+      }
       
-      console.log('Created todo-list web component');
-      console.log('You can use it in HTML with <todo-list></todo-list>');
+      stateChanged(state, path, fullState) {
+        console.log(`TodoList component received state change for path: ${path}`);
+        this.render();
+      }
       
-      // Add some todos for demonstration
-      stateManager.setState({
-        todos: [
-          { id: 1, text: 'Web component todo 1', completed: false },
-          { id: 2, text: 'Web component todo 2', completed: true }
-        ]
-      });
-      
-      console.log();
-    } else {
-      console.log('Example 8: Web Component Integration (skipped - not in browser environment)');
-      console.log();
+      render() {
+        const todos = this.getState('todos');
+        
+        this.shadowRoot.innerHTML = `
+          <style>
+            :host {
+              display: block;
+              font-family: sans-serif;
+            }
+            ul {
+              list-style: none;
+              padding: 0;
+            }
+            li {
+              padding: 8px;
+              margin-bottom: 4px;
+              background-color: #f5f5f5;
+              border-radius: 4px;
+            }
+            .completed {
+              text-decoration: line-through;
+              opacity: 0.7;
+            }
+          </style>
+          <h2>Todo List</h2>
+          <ul>
+            ${todos.map(todo => `
+              <li class="${todo.completed ? 'completed' : ''}">
+                ${todo.text}
+              </li>
+            `).join('')}
+          </ul>
+          <button id="add">Add Todo</button>
+        `;
+        
+        // Add event listener to add button
+        this.shadowRoot.querySelector('#add').addEventListener('click', () => {
+          const newTodo = {
+            id: Date.now(),
+            text: `New todo ${Date.now()}`,
+            completed: false
+          };
+          
+          this.setState(state => ({
+            todos: [...state.todos, newTodo]
+          }));
+        });
+      }
     }
+    
+    createConnectedComponent('todo-list', TodoListElement, {
+      statePaths: ['todos']
+    });
+    
+    console.log('Created todo-list web component');
+    console.log('You can use it in HTML with <todo-list></todo-list>');
+    
+    // Add some todos for demonstration
+    stateManager.setState({
+      todos: [
+        { id: 1, text: 'Web component todo 1', completed: false },
+        { id: 2, text: 'Web component todo 2', completed: true }
+      ]
+    });
+    
+    console.log();
     
     console.log('All examples completed successfully!');
   } catch (error) {

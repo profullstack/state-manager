@@ -1,10 +1,11 @@
 {
   "name": "@profullstack/state-manager",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Enhanced state manager with web component integration, persistence, and subscription management",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
+  "browser": "dist/index.js",
   "exports": {
     ".": "./dist/index.js",
     "./persistence": "./dist/persistence.js",
@@ -12,7 +13,7 @@
     "./middleware": "./dist/middleware.js"
   },
   "scripts": {
-    "build": "mkdir -p dist && cp -r src/* dist/",
+    "build": "node browser-build.js",
     "test": "pnpm install && vitest run --bail 1",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -36,9 +37,7 @@
   ],
   "author": "ProFullStack",
   "license": "MIT",
-  "dependencies": {
-    "eventemitter3": "^5.0.1"
-  },
+  "dependencies": {},
   "repository": {
     "type": "git",
     "url": "https://github.com/profullstack/state-manager"
