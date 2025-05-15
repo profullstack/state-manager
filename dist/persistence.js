@@ -296,7 +296,7 @@ export function createIndexedDBAdapter(dbName = 'stateManagerDB', storeName = 's
   
   // Initialize the database
   const initPromise = new Promise((resolve, reject) => {
-    if (!window.indexedDB) {
+    if (typeof window !== "undefined" && !window.indexedDB) {
       reject(new Error('IndexedDB is not supported in this browser'));
       return;
     }
