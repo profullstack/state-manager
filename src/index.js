@@ -4,7 +4,7 @@
  * Enhanced state manager with web component integration, persistence, and subscription management
  */
 
-import EventEmitter from 'eventemitter3';
+import { EventEmitter } from './event-emitter.js';
 import { createPersistenceManager } from './persistence.js';
 import { createWebComponentIntegration } from './web-components.js';
 import { createMiddlewareManager } from './middleware.js';
